@@ -25,6 +25,10 @@
     </script>
     <script async src="https://fundingchoicesmessages.google.com/i/pub-5521219086088837?ers=1"></script><script>(function() {function signalGooglefcPresent() {if (!window.frames['googlefcPresent']) {if (document.body) {const iframe = document.createElement('iframe'); iframe.style = 'width: 0; height: 0; border: none; z-index: -1000; left: -1000px; top: -1000px;'; iframe.style.display = 'none'; iframe.name = 'googlefcPresent'; document.body.appendChild(iframe);} else {setTimeout(signalGooglefcPresent, 0);}}}signalGooglefcPresent();})();</script>
     <script src="https://cdn.jsdelivr.net/gh/gnmathcopy/gnmathcopy.github.io@main/gnmath.js"></script>
+    <!-- Firebase -->
+    <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>SX</title>
@@ -545,6 +549,34 @@ main {
 #settings-button:active {
     transform: translateY(0);
 }
+#loginBtn {
+    background: rgba(255,255,255,0.15);
+    border: 1px solid rgba(255,255,255,0.4);
+    color: white;
+    padding: 0.5rem 1rem;
+    border-radius: var(--radius);
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    transition: all 0.3s ease;
+    backdrop-filter: blur(10px);
+}
+#loginBtn:hover {
+    background: rgba(255,255,255,0.25);
+    transform: translateY(-1px);
+}
+#loginBtn img {
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+}
+#continuePlayingWrapper {
+    margin-bottom: 0;
+}
+
 
 footer {
     background: var(--bg-secondary);
@@ -633,6 +665,7 @@ footer {
                 </select>
             </div>
             <div class="control-buttons">
+                <button id="loginBtn" onclick="handleLogin()">Sign In with Google</button>
                 <button id="settings" style="background-color: var(--primary-color); color: white; border: none; border-radius: 4px; padding: 0.5rem 1rem; font-size: 16px; cursor: pointer;">Settings</button>
             </div>
         </div>
@@ -648,6 +681,16 @@ footer {
    </script>
 
     <main>
+        <details id="continuePlayingWrapper" open style="display:none;">
+            <summary id="continuePlayingSummary" style="font-size: 1.2rem; font-weight: bold; cursor: pointer;">Continue Playing</summary>
+            <div id="continuePlaying" class="zone-container"></div>
+        </details>
+        <br id="continuePlayingDivider" style="display:none;"><hr id="continuePlayingHR" style="display:none;"><br id="continuePlayingBR2" style="display:none;">
+        <details id="topPlayedWrapper" open>
+            <summary id="topPlayedSummary" style="font-size: 1.2rem; font-weight: bold; cursor: pointer;">Top Played</summary>
+            <div id="topPlayed" class="zone-container"></div>
+        </details>
+        <br><hr><br>
         <details id="featuredZonesWrapper" open>
             <summary id="allZonesSummary" style="font-size: 1.2rem; font-weight: bold; cursor: pointer;">Featured Zones</summary>
             <div id="featuredZones" class="zone-container"></div>
@@ -700,7 +743,92 @@ footer {
     <input type="file" id="importData" style="display: none;" onchange="loadData(event)">
 
     <script>
-        const container = document.getElementById('container');
+        
+    // Firebase config
+    const firebaseConfig = {
+        apiKey: "AIzaSyDMlSMKb7hg0DSfm7uiXxF34XAmy9mJYkc",
+        authDomain: "myown-79bf5.firebaseapp.com",
+        projectId: "myown-79bf5",
+        storageBucket: "myown-79bf5.firebasestorage.app",
+        messagingSenderId: "917500056589",
+        appId: "1:917500056589:web:25ea387db58de2abcb3144",
+        measurementId: "G-7YGMWDP1LE"
+    };
+    firebase.initializeApp(firebaseConfig);
+    const auth = firebase.auth();
+    const db = firebase.firestore();
+    let currentUser = null;
+
+    // Auth state listener
+    auth.onAuthStateChanged(async (user) => {
+        const btn = document.getElementById('loginBtn');
+        if (user) {
+            currentUser = user;
+            btn.innerHTML = `<img src="${user.photoURL || ''}" onerror="this.style.display='none'"> ${user.displayName || user.email}`;
+            btn.onclick = handleLogout;
+            await loadContinuePlaying();
+        } else {
+            currentUser = null;
+            btn.innerHTML = 'Sign In with Google';
+            btn.onclick = handleLogin;
+            document.getElementById('continuePlayingWrapper').style.display = 'none';
+            document.getElementById('continuePlayingDivider').style.display = 'none';
+            document.getElementById('continuePlayingHR').style.display = 'none';
+            document.getElementById('continuePlayingBR2').style.display = 'none';
+        }
+    });
+
+    function handleLogin() {
+        const provider = new firebase.auth.GoogleAuthProvider();
+        auth.signInWithPopup(provider).catch(err => alert('Login failed: ' + err.message));
+    }
+
+    function handleLogout() {
+        auth.signOut();
+    }
+
+    async function saveRecentlyPlayed(zone) {
+        if (!currentUser) return;
+        const ref = db.collection('users').doc(currentUser.uid).collection('recentlyPlayed').doc(String(zone.id));
+        await ref.set({ id: zone.id, name: zone.name, cover: zone.cover, url: zone.url, playedAt: Date.now() });
+    }
+
+    async function loadContinuePlaying() {
+        if (!currentUser) return;
+        try {
+            const snapshot = await db.collection('users').doc(currentUser.uid)
+                .collection('recentlyPlayed').orderBy('playedAt', 'desc').limit(10).get();
+            const recent = snapshot.docs.map(d => d.data());
+            if (recent.length === 0) return;
+            displayContinuePlaying(recent);
+        } catch(e) { console.error('Error loading recently played:', e); }
+    }
+
+    function displayContinuePlaying(recentZones) {
+        const cont = document.getElementById('continuePlaying');
+        cont.innerHTML = '';
+        recentZones.forEach(zone => {
+            const item = document.createElement('div');
+            item.className = 'zone-item';
+            item.onclick = () => openZone(zone);
+            const img = document.createElement('img');
+            img.src = zone.cover.replace('{COVER_URL}', coverURL).replace('{HTML_URL}', htmlURL);
+            img.alt = zone.name;
+            const btn = document.createElement('button');
+            btn.textContent = zone.name;
+            btn.onclick = (e) => { e.stopPropagation(); openZone(zone); };
+            item.appendChild(img);
+            item.appendChild(btn);
+            cont.appendChild(item);
+        });
+        document.getElementById('continuePlayingWrapper').style.display = '';
+        document.getElementById('continuePlayingDivider').style.display = '';
+        document.getElementById('continuePlayingHR').style.display = '';
+        document.getElementById('continuePlayingBR2').style.display = '';
+        document.getElementById('continuePlayingSummary').textContent = `Continue Playing (${recentZones.length})`;
+    }
+
+const container = document.getElementById('container');
 const zoneViewer = document.getElementById('zoneViewer');
 let zoneFrame = document.getElementById('zoneFrame');
 const searchBar = document.getElementById('searchBar');
@@ -756,6 +884,7 @@ async function listZones() {
         };
         zones[0].featured = true;
         await fetchPopularity();
+        displayTopPlayed();
         sortZones();
         const search = new URLSearchParams(window.location.search);
         const id = search.get('id');
@@ -828,6 +957,61 @@ async function fetchPopularity() {
     } catch (error) {
         popularityData[0] = 0;
     }
+}
+
+function displayTopPlayed() {
+    const topContainer = document.getElementById('topPlayed');
+    const top10 = [...zones]
+        .filter(z => popularityData[z.id])
+        .sort((a, b) => (popularityData[b.id] || 0) - (popularityData[a.id] || 0))
+        .slice(0, 10);
+    topContainer.innerHTML = "";
+    top10.forEach((file, index) => {
+        const zoneItem = document.createElement("div");
+        zoneItem.className = "zone-item";
+        zoneItem.style.position = "relative";
+        zoneItem.onclick = () => openZone(file);
+        const badge = document.createElement("div");
+        badge.textContent = `#${index + 1}`;
+        badge.style.cssText = `
+            position: absolute; top: 8px; left: 8px; z-index: 3;
+            background: var(--gradient-primary); color: white;
+            font-size: 12px; font-weight: 700; padding: 2px 8px;
+            border-radius: 20px; box-shadow: var(--shadow-sm);
+        `;
+        const img = document.createElement("img");
+        img.dataset.src = file.cover.replace("{COVER_URL}", coverURL).replace("{HTML_URL}", htmlURL);
+        img.alt = file.name;
+        img.loading = "lazy";
+        img.className = "lazy-zone-img";
+        const button = document.createElement("button");
+        button.textContent = file.name;
+        button.onclick = (event) => { event.stopPropagation(); openZone(file); };
+        const plays = document.createElement("div");
+        plays.textContent = `${(popularityData[file.id] || 0).toLocaleString()} plays`;
+        plays.style.cssText = `
+            font-size: 11px; color: var(--text-muted); padding: 0 1rem 0.75rem;
+            text-align: center; font-weight: 500;
+        `;
+        zoneItem.appendChild(badge);
+        zoneItem.appendChild(img);
+        zoneItem.appendChild(button);
+        zoneItem.appendChild(plays);
+        topContainer.appendChild(zoneItem);
+    });
+    document.getElementById("topPlayedSummary").textContent = `Top Played (${top10.length})`;
+    const lazyImages = document.querySelectorAll('#topPlayed img.lazy-zone-img');
+    const imageObserver = new IntersectionObserver((entries, observer) => {
+        entries.forEach(entry => {
+            if (entry.isIntersecting) {
+                const img = entry.target;
+                img.src = img.dataset.src;
+                img.classList.remove("lazy-zone-img");
+                observer.unobserve(img);
+            }
+        });
+    }, { rootMargin: "100px", threshold: 0.1 });
+    lazyImages.forEach(img => { imageObserver.observe(img); });
 }
 
 function sortZones() {
@@ -932,6 +1116,9 @@ function filterZones() {
     const filteredZones = zones.filter(zone => zone.name.toLowerCase().includes(query));
     if (query.length !== 0) {
         document.getElementById("featuredZonesWrapper").removeAttribute("open");
+        document.getElementById("topPlayedWrapper").removeAttribute("open");
+    } else {
+        document.getElementById("topPlayedWrapper").setAttribute("open", "");
     }
     displayZones(filteredZones);
 }
@@ -957,6 +1144,7 @@ function openZone(file) {
                 document.getElementById('zoneAuthor').href = file.authorLink;
             }
             zoneViewer.style.display = "block";
+            saveRecentlyPlayed(file);
             const url = new URL(window.location);
             url.searchParams.set('id', file.id);
             history.pushState(null, '', url.toString());
